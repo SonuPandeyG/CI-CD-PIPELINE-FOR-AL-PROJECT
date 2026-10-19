@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Microsoft cloud sandbox",
+            "request": "launch",
+            "type": "al",
+            "tenant": "eaae1563-3fb9-4be9-b19b-31fa1a5d3753", //Sonu
+            "environmentType": "Sandbox",
+            "environmentName": "BCPracticeSandbox",
+            "startupObjectId": 59126,
+            "startupObjectType": "Page",
+            "breakOnError": "All",
+            "launchBrowser": true,
+            "enableLongRunningSqlStatements": true,
+            "enableSqlInformationDebugger": true,
+            "schemaUpdateMode": "Synchronize"
+        }
+    ]
+}
+
