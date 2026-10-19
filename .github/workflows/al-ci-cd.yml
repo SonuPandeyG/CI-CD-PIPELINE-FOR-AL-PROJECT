@@ -1,0 +1,140 @@
+name: AL CI-CD Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+      - feature/*
+      - bugfix/*
+
+jobs:
+
+# ========================
+# BUILD JOB
+# ========================
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Create Output Folder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE/output"
+
+      - name: Install BC Helper
+        shell: pwsh
+        run: |
+          Install-Module BcContainerHelper -Force -AllowClobber -Scope CurrentUser
+          Import-Module BcContainerHelper
+
+      - name: Get BC Artifact
+        shell: pwsh
+        run: |
+          $artifactUrl = Get-BcArtifactUrl -type Sandbox -country w1 -select Latest
+          echo "ARTIFACT_URL=$artifactUrl" >> $env:GITHUB_ENV
+
+      - name: Create BC Container
+        shell: pwsh
+        run: |
+          $credential = New-Object pscredential ('admin',(ConvertTo-SecureString 'P@ssword1' -AsPlainText -Force))
+
+          New-BcContainer `
+            -accept_eula `
+            -artifactUrl $env:ARTIFACT_URL `
+            -containerName bcbuild `
+            -auth UserPassword `
+            -Credential $credential `
+            -updateHosts
+
+      - name: Copy Source Into Container
+        shell: pwsh
+        run: |
+          $dest = "C:\ProgramData\BcContainerHelper\Extensions\bcbuild\mysource"
+
+          if (Test-Path $dest) {
+            Remove-Item -Recurse -Force $dest
+          }
+
+          New-Item -ItemType Directory -Path $dest
+
+          Copy-Item `
+            -Path "$env:GITHUB_WORKSPACE\*" `
+            -Destination $dest `
+            -Recurse -Force
+
+      - name: Compile AL Extension
+        shell: pwsh
+        run: |
+          $credential = New-Object pscredential ('admin',(ConvertTo-SecureString 'P@ssword1' -AsPlainText -Force))
+
+          Compile-AppInBcContainer `
+            -containerName bcbuild `
+            -credential $credential `
+            -appProjectFolder "C:\ProgramData\BcContainerHelper\Extensions\bcbuild\mysource" `
+            -appOutputFolder "C:\ProgramData\BcContainerHelper\Extensions\bcbuild\mysource\output"
+
+      - name: Copy Output Back
+        shell: pwsh
+        run: |
+          Copy-Item `
+            -Path "C:\ProgramData\BcContainerHelper\Extensions\bcbuild\mysource\output\*" `
+            -Destination "$env:GITHUB_WORKSPACE/output" `
+            -Recurse -Force
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: al-app
+          path: output/*.app
+
+      - name: Remove Container
+        shell: pwsh
+        run: |
+          Remove-BcContainer -containerName bcbuild
+
+# ========================
+# DEPLOY JOB
+# ========================
+  deploy:
+    needs: build
+    runs-on: windows-latest
+
+    if: github.ref == 'refs/heads/develop'
+
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: al-app
+
+      - name: Install BC Helper
+        shell: pwsh
+        run: |
+          Install-Module BcContainerHelper -Force -AllowClobber -Scope CurrentUser
+          Import-Module BcContainerHelper
+
+      - name: Deploy to Business Central
+        shell: pwsh
+        run: |
+          Write-Host "Deploying to Sandbox"
+
+          $authContext = New-BcAuthContext `
+            -clientId "${{ secrets.BC_CLIENT_ID }}" `
+            -clientSecret "${{ secrets.BC_CLIENT_SECRET }}" `
+            -tenantId "${{ secrets.BC_TENANT_ID }}"
+
+          $appFile = Get-Item "$env:GITHUB_WORKSPACE\*.app"
+
+          if (-not $appFile) {
+            throw "No .app file found!"
+          }
+
+          Publish-PerTenantExtensionApps `
+            -bcAuthContext $authContext `
+            -environment "BCPracticeSandbox" `
+            -appFile $appFile
+
+          Write-Host "Deployment completed"
